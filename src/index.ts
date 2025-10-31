@@ -285,17 +285,17 @@ async function handleChannelMessage(handler: any, event: any) {
   const lowerMessage = message.toLowerCase();
 
   if (lowerMessage.includes("gm") || lowerMessage.includes("good morning")) {
-    await handler.sendMessage(channelId, `GM <@\${userId}>! ☀️📸\\`);
+    await handler.sendMessage(channelId, `GM <@${userId}>! ☀️📸`);
     return;
   }
 
   if (lowerMessage.includes("gn") || lowerMessage.includes("good night")) {
-    await handler.sendMessage(channelId, `Good night <@\${userId}>! 🌙📸\\`);
+    await handler.sendMessage(channelId, `Good night <@${userId}>! 🌙📸`);
     return;
   }
 
   if (lowerMessage.match(/(hello|hi|hey)/)) {
-    await handler.sendMessage(channelId, `Hello <@\${userId}>! 👋📸\\`);
+    await handler.sendMessage(channelId, `Hello <@${userId}>! 👋📸`);
     return;
   }
 
