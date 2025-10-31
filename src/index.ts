@@ -5,11 +5,21 @@ import { logger } from "hono/logger";
 import commands from "./commands";
 import { type Address } from "viem";
 import { Database } from "bun:sqlite";
+import cron from "node-cron";
 
 type UserStats = {
   user_id: string;
   message_count: number;
   reaction_count: number;
+};
+
+type BotChannel = {
+  id?: number;
+  space_id: string;
+  channel_id: string;
+  last_cron_post?: number;
+  scheduled_message?: string;
+  cron_enabled?: boolean;
 };
 
 const DB_PATH = process.env.DATABASE_PATH || "./photography.db";
@@ -22,6 +32,17 @@ db.run(`
     reaction_count INTEGER DEFAULT 0,
     last_active INTEGER DEFAULT 0
   )
+`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS bot_channels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  space_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL UNIQUE,
+  last_cron_post INTEGER,        
+  scheduled_message TEXT DEFAULT '🌞 gm everyone!',
+  cron_enabled INTEGER DEFAULT 0 -- 0 = false, 1 = true            
+);
 `);
 
 console.log(`✅ Database initialized at: ${DB_PATH}`);
@@ -49,40 +70,111 @@ const handlerLogger = (scope: string) => ({
 });
 const messageLogger = handlerLogger("MESSAGE");
 
+//--------------- Slash Commands -------------------//
 bot.onSlashCommand("help", async (handler, { channelId }) => {
   await handler.sendMessage(
     channelId,
     "**Available Commands:**\n\n" +
       "• `/help` - Show this help message\n" +
       "• `/leaderboard` - Who is getting rewarded this month? \n\n" +
+      "• `/set-gm` - Wake the people up with a bubbly message \n\n" +
       "• Some messages trigger me, so feel free to say hello and see what works. \n",
   );
 });
 
+bot.onSlashCommand(
+  "leaderboard",
+  async (handler, { spaceId, channelId, userId }) => {
+    try {
+      const topUsers = db
+        .query(
+          `
+      SELECT user_id, message_count, reaction_count
+      FROM user_stats
+      WHERE space_id = ?
+      ORDER BY message_count DESC
+      LIMIT 10
+    `,
+        )
+        .all(spaceId) as UserStats[];
+
+      if (topUsers.length === 0) {
+        await handler.sendMessage(channelId, "📊 No activity data yet!");
+        return;
+      }
+
+      const medals = ["🥇", "🥈", "🥉"];
+      let leaderboard = "🏆 **Top Contributors**\n\n";
+
+      topUsers.forEach((user: UserStats, index: number) => {
+        const medal = medals[index] ?? `${index + 1}.`;
+
+        leaderboard += `${medal} <@${user.user_id}>\n`;
+        leaderboard += `   💬 ${user.message_count} messages | ❤️ ${user.reaction_count} reactions\n\n`;
+
+        if (userId.toString() === user.user_id) {
+          leaderboard += `   🎉 You are position ${index + 1} with ${user.message_count} messages and ${user.reaction_count} reactions`;
+        }
+      });
+    } catch (error) {
+      console.error("Leaderboard error:", error);
+      await handler.sendMessage(channelId, "❌ Error fetching leaderboard");
+    }
+  },
+);
+
+bot.onSlashCommand(
+  "set-gm",
+  async (handler, { spaceId, channelId, userId, args }) => {
+    let gm_message = args.join(" ");
+
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId);
+    if (!isAdmin) {
+      await handler.sendMessage(channelId, "❌ Only admins can schedule gms.");
+      return;
+    }
+    await db.run(
+      `
+    INSERT INTO bot_channels (space_id, channel_id, scheduled_message, cron_enabled)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT(channel_id) DO UPDATE SET cron_enabled = 1
+    `,
+      [spaceId, channelId, gm_message],
+    );
+
+    await handler.sendMessage(
+      channelId,
+      "✅ We keep the 'gm' rolling every morning!",
+    );
+  },
+);
+
+//--------------- Bot Listeners -------------------//
 bot.onMessage(
   async (
     handler,
     { message, userId, eventId, mentions, channelId, spaceId },
   ) => {
+    const isAdmin = handler.hasAdminPermission(userId, spaceId);
     try {
-      db.run(
-        `
+      if (!isAdmin) {
+        db.run(
+          `
     INSERT INTO user_stats (user_id, space_id, message_count, last_active)
     VALUES (?, ?, 1, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       message_count = message_count + 1,
       last_active = ?
   `,
-        [userId, spaceId, Date.now(), Date.now()],
-      );
+          [userId, spaceId, Date.now(), Date.now()],
+        );
+      }
 
       if (
         message.toLowerCase().includes("tip") &&
         mentions &&
         mentions.length > 0
       ) {
-        const isAdmin = handler.hasAdminPermission(userId, spaceId);
-
         if (!isAdmin) {
           await handler.sendMessage(
             channelId,
@@ -105,7 +197,7 @@ bot.onMessage(
           );
         });
       } else {
-        handleChannelMessage(handler, event);
+        handleChannelMessage(handler, { message, userId, channelId, spaceId });
       }
     } catch (error) {
       messageLogger.error("Failed handling message", error, {
@@ -187,47 +279,7 @@ bot.onReaction(async (handler, event) => {
   );
 });
 
-bot.onSlashCommand(
-  "leaderboard",
-  async (handler, { spaceId, channelId, userId }) => {
-    try {
-      const topUsers = db
-        .query(
-          `
-      SELECT user_id, message_count, reaction_count
-      FROM user_stats
-      WHERE space_id = ?
-      ORDER BY message_count DESC
-      LIMIT 10
-    `,
-        )
-        .all(spaceId) as UserStats[];
-
-      if (topUsers.length === 0) {
-        await handler.sendMessage(channelId, "📊 No activity data yet!");
-        return;
-      }
-
-      const medals = ["🥇", "🥈", "🥉"];
-      let leaderboard = "🏆 **Top Contributors**\n\n";
-
-      topUsers.forEach((user: UserStats, index: number) => {
-        const medal = medals[index] ?? `${index + 1}.`;
-
-        leaderboard += `${medal} <@${user.user_id}>\n`;
-        leaderboard += `   💬 ${user.message_count} messages | ❤️ ${user.reaction_count} reactions\n\n`;
-
-        if (userId.toString() === user.user_id) {
-          leaderboard += `   🎉 You are position ${index + 1} with ${user.message_count} messages and ${user.reaction_count} reactions`;
-        }
-      });
-    } catch (error) {
-      console.error("Leaderboard error:", error);
-      await handler.sendMessage(channelId, "❌ Error fetching leaderboard");
-    }
-  },
-);
-
+//---------------------Functions----------------------------//
 async function handleChannelMessage(handler: any, event: any) {
   const { message, userId, channelId, spaceId } = event;
   const lowerMessage = message.toLowerCase();
@@ -264,5 +316,33 @@ async function handleChannelMessage(handler: any, event: any) {
     );
   }
 }
+
+async function postCronMessages() {
+  const channels = db
+    .query(`SELECT * FROM bot_channels WHERE cron_enabled = 1`)
+    .all() as BotChannel[];
+
+  const now = Date.now();
+
+  for (const channel of channels) {
+    const message = channel.scheduled_message || "🌞 gm everyone!";
+    await bot.sendMessage(channel.channel_id, message);
+
+    // Update last post info
+    await db.run(
+      `UPDATE bot_channels SET last_cron_post = ? WHERE channel_id = ?`,
+      [now, channel.channel_id],
+    );
+  }
+}
+
+//---------------------CRON----------------------------//
+cron.schedule(
+  "0 9 * * *",
+  async () => {
+    postCronMessages();
+  },
+  { timezone: "UTC" },
+);
 
 export default app;
