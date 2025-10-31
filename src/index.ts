@@ -3,10 +3,9 @@ import { isDefaultChannelId } from "@towns-protocol/sdk";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import commands from "./commands";
-import { type Address } from "viem";
 import { Database } from "bun:sqlite";
 import cron from "node-cron";
-
+import { Filter } from "bad-words";
 type UserStats = {
   user_id: string;
   message_count: number;
@@ -45,6 +44,17 @@ CREATE TABLE IF NOT EXISTS bot_channels (
 );
 `);
 
+db.run(`
+CREATE TABLE IF NOT EXISTS user_infractions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  space_id TEXT NOT NULL,
+  message TEXT NOT NULL,
+  timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+  infraction_count INTEGER DEFAULT 1
+);
+`);
+
 console.log(`✅ Database initialized at: ${DB_PATH}`);
 
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" as `0x${string}`;
@@ -62,6 +72,7 @@ const { jwtMiddleware, handler } = bot.start();
 const app = new Hono();
 app.use(logger());
 app.post("/webhook", jwtMiddleware, handler);
+const filter = new Filter();
 
 const handlerLogger = (scope: string) => ({
   info: (...args: any[]) => console.log(`[${scope}]`, ...args),
@@ -77,7 +88,7 @@ bot.onSlashCommand("help", async (handler, { channelId }) => {
     "**Available Commands:**\n\n" +
       "• `/help` - Show this help message\n" +
       "• `/leaderboard` - Who is getting rewarded this month? \n\n" +
-      "• `/set-gm` - Wake the people up with a bubbly message \n\n" +
+      "• `/set_gm` - Wake the people up with a bubbly message \n\n" +
       "• Some messages trigger me, so feel free to say hello and see what works. \n",
   );
 });
@@ -124,7 +135,7 @@ bot.onSlashCommand(
 );
 
 bot.onSlashCommand(
-  "set-gm",
+  "set_gm",
   async (handler, { spaceId, channelId, userId, args }) => {
     let gm_message = args.join(" ");
 
@@ -149,6 +160,31 @@ bot.onSlashCommand(
   },
 );
 
+bot.onSlashCommand("infractions", async (handler, { spaceId, channelId }) => {
+  const infractions = db
+    .query(
+      `SELECT user_id, COUNT(*) as total
+       FROM user_infractions
+       WHERE space_id = ?
+       GROUP BY user_id
+       ORDER BY total DESC
+       LIMIT 10`,
+    )
+    .all(spaceId) as { user_id: string; total: number }[];
+
+  if (infractions.length === 0) {
+    await handler.sendMessage(channelId, "✅ No infractions logged yet!");
+    return;
+  }
+
+  let msg = "🚨 **Top Offenders**\n\n";
+  for (const row of infractions) {
+    msg += `• <@${row.user_id}> — ${row.total} infractions\n`;
+  }
+
+  await handler.sendMessage(channelId, msg);
+});
+
 //--------------- Bot Listeners -------------------//
 bot.onMessage(
   async (
@@ -156,6 +192,56 @@ bot.onMessage(
     { message, userId, eventId, mentions, channelId, spaceId },
   ) => {
     const isAdmin = handler.hasAdminPermission(userId, spaceId);
+
+    // 1️⃣ Profanity check
+    if (filter.isProfane(message)) {
+      console.log(`🧹 Profanity detected from ${userId}: "${message}"`);
+
+      // 2️⃣React to the message
+      await handler.sendReaction(channelId, eventId, "👎🏾");
+      await handler.sendReaction(channelId, eventId, "❌");
+
+      // Add user infraction to db
+      db.run(
+        `
+      INSERT INTO user_infractions (user_id, space_id, message)
+      VALUES (?, ?, ?)
+    `,
+        [userId, spaceId, message],
+      );
+
+      // count user's infractions
+      const result = db
+        .query(
+          `SELECT COUNT(*) as count FROM user_infractions WHERE user_id = ? AND space_id = ?`,
+        )
+        .get(userId, spaceId) as { count: number };
+
+      const totalInfractions = result?.count || 1;
+
+      if (totalInfractions >= 5) {
+        await handler.sendMessage(
+          channelId,
+          `⚠️ <@${userId}>, please avoid using inappropriate language.`,
+        );
+      }
+
+      if (totalInfractions === 20) {
+        await handler.sendMessage(
+          channelId,
+          `⛔ <@${userId}>, you have been muted for repeated profanity.`,
+        );
+
+        try {
+          await handler.ban(userId, spaceId);
+        } catch (error) {
+          console.warn("Mute not supported or failed:", error);
+        }
+      }
+
+      return;
+    }
+
     try {
       if (!isAdmin) {
         db.run(
@@ -312,7 +398,7 @@ async function handleChannelMessage(handler: any, event: any) {
   if (lowerMessage.includes("bot help") || lowerMessage.includes("!help")) {
     await handler.sendMessage(
       channelId,
-      `💡 For now, the only available command involves mentioning me with a "tip" in the sentence`,
+      `💡 For now, /leaderboard brings up the leaderboard`,
     );
   }
 }

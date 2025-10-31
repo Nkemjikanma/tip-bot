@@ -10,8 +10,12 @@ const commands = [
     description: "See who's been keeping the channel on fire",
   },
   {
-    name: "set-gm",
+    name: "set_gm",
     description: "Set gm everymorning",
+  },
+  {
+    name: "infractions",
+    description: "See who has been misbehaving",
   },
 ] as const satisfies PlainMessage<SlashCommand>[];
 
