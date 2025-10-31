@@ -371,56 +371,55 @@ bot.onMessage(
   ) => {
     const isAdmin = handler.hasAdminPermission(userId, spaceId);
 
-    // 1️⃣ Profanity check
-    if (filter.isProfane(message)) {
-      console.log(`🧹 Profanity detected from ${userId}: "${message}"`);
+    try {
+      // 1️⃣ Profanity check
+      if (filter.isProfane(message)) {
+        console.log(`🧹 Profanity detected from ${userId}: "${message}"`);
 
-      // 2️⃣React to the message
-      await handler.sendReaction(channelId, eventId, "👎🏾");
-      await handler.sendReaction(channelId, eventId, "❌");
+        // 2️⃣React to the message
+        await handler.sendReaction(channelId, eventId, "👎🏾");
+        await handler.sendReaction(channelId, eventId, "❌");
 
-      // Add user infraction to db
-      db.run(
-        `
+        // Add user infraction to db
+        db.run(
+          `
       INSERT INTO user_infractions (user_id, space_id, message)
       VALUES (?, ?, ?)
     `,
-        [userId, spaceId, message],
-      );
-
-      // count user's infractions
-      const result = db
-        .query(
-          `SELECT COUNT(*) as count FROM user_infractions WHERE user_id = ? AND space_id = ?`,
-        )
-        .get(userId, spaceId) as { count: number };
-
-      const totalInfractions = result?.count || 1;
-
-      if (totalInfractions >= 5) {
-        await handler.sendMessage(
-          channelId,
-          `⚠️ <@${userId}>, please avoid using inappropriate language.`,
-        );
-      }
-
-      if (totalInfractions === 20) {
-        await handler.sendMessage(
-          channelId,
-          `⛔ <@${userId}>, you have been muted for repeated profanity.`,
+          [userId, spaceId, message],
         );
 
-        try {
-          await handler.ban(userId, spaceId);
-        } catch (error) {
-          console.warn("Mute not supported or failed:", error);
+        // count user's infractions
+        const result = db
+          .query(
+            `SELECT COUNT(*) as count FROM user_infractions WHERE user_id = ? AND space_id = ?`,
+          )
+          .get(userId, spaceId) as { count: number };
+
+        const totalInfractions = result?.count || 1;
+
+        if (totalInfractions >= 5) {
+          await handler.sendMessage(
+            channelId,
+            `⚠️ <@${userId}>, please avoid using inappropriate language.`,
+          );
         }
+
+        if (totalInfractions === 20) {
+          await handler.sendMessage(
+            channelId,
+            `⛔ <@${userId}>, you have been muted for repeated profanity.`,
+          );
+
+          try {
+            await handler.ban(userId, spaceId);
+          } catch (error) {
+            console.warn("Mute not supported or failed:", error);
+          }
+        }
+
+        return;
       }
-
-      return;
-    }
-
-    try {
       if (!isAdmin) {
         // 🏁 Check if there's an active challenge
         const activeChallenge = db
@@ -577,32 +576,41 @@ async function handleChannelMessage(handler: any, event: any) {
   const { message, userId, channelId, spaceId } = event;
   const lowerMessage = message.toLowerCase();
 
-  if (lowerMessage.includes("gm") || lowerMessage.includes("good morning")) {
+  if (
+    (lowerMessage.includes("bot") && lowerMessage.includes("gm")) ||
+    (lowerMessage.includes("bot") && lowerMessage.includes("good morning"))
+  ) {
     await handler.sendMessage(channelId, `GM <@${userId}>! ☀️📸`);
     return;
   }
 
-  if (lowerMessage.includes("gn") || lowerMessage.includes("good night")) {
+  if (
+    (lowerMessage.includes("bot") && lowerMessage.includes("gn")) ||
+    (lowerMessage.includes("bot") && lowerMessage.includes("good night"))
+  ) {
     await handler.sendMessage(channelId, `Good night <@${userId}>! 🌙📸`);
     return;
   }
 
-  if (lowerMessage.match(/(hello|hi|hey)/)) {
+  if (lowerMessage.match(/(hello|hi|hey bot)/)) {
     await handler.sendMessage(channelId, `Hello <@${userId}>! 👋📸`);
     return;
   }
 
-  if (lowerMessage.includes("wagmi")) {
+  if (lowerMessage.includes("bot") && lowerMessage.includes("wagmi")) {
     await handler.sendReaction(channelId, event.eventId, "🚀");
     return;
   }
 
-  if (lowerMessage.includes("moon")) {
+  if (lowerMessage.includes("bot") && lowerMessage.includes("moon")) {
     await handler.sendReaction(channelId, event.eventId, "🌙");
     return;
   }
 
-  if (lowerMessage.includes("bot help") || lowerMessage.includes("!help")) {
+  if (
+    (lowerMessage.includes("bot") && lowerMessage.includes("help")) ||
+    lowerMessage.includes("!help")
+  ) {
     await handler.sendMessage(
       channelId,
       `💡 For now, /leaderboard brings up the leaderboard`,
