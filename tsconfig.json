@@ -19,7 +19,13 @@
         "noFallthroughCasesInSwitch": true,
         "skipLibCheck": true,
         "outDir": "./dist",
-        "types": ["node"]
+        "types": [
+            "node",
+            "bun-types"
+        ]
     },
-    "include": ["src/**/*", "esbuild.config.mjs"]
+    "include": [
+        "src/**/*",
+        "esbuild.config.mjs"
+    ]
 }

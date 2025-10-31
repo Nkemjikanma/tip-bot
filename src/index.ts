@@ -6,6 +6,12 @@ import commands from "./commands";
 import { type Address } from "viem";
 import { Database } from "bun:sqlite";
 
+type UserStats = {
+  user_id: string;
+  message_count: number;
+  reaction_count: number;
+};
+
 const DB_PATH = process.env.DATABASE_PATH || "./photography.db";
 const db = new Database("photography.db");
 db.run(`
@@ -195,28 +201,23 @@ bot.onSlashCommand(
       LIMIT 10
     `,
         )
-        .all(spaceId);
+        .all(spaceId) as UserStats[];
 
       if (topUsers.length === 0) {
         await handler.sendMessage(channelId, "📊 No activity data yet!");
         return;
       }
 
+      const medals = ["🥇", "🥈", "🥉"];
       let leaderboard = "🏆 **Top Contributors**\n\n";
 
-      topUsers.forEach((user, index) => {
-        const medal =
-          index === 0
-            ? "🥇"
-            : index === 1
-              ? "🥈"
-              : index === 2
-                ? "🥉"
-                : `${index + 1}.`;
+      topUsers.forEach((user: UserStats, index: number) => {
+        const medal = medals[index] ?? `${index + 1}.`;
+
         leaderboard += `${medal} <@${user.user_id}>\n`;
         leaderboard += `   💬 ${user.message_count} messages | ❤️ ${user.reaction_count} reactions\n\n`;
 
-        if (userId === user.user_id) {
+        if (userId.toString() === user.user_id) {
           leaderboard += `   🎉 You are position ${index + 1} with ${user.message_count} messages and ${user.reaction_count} reactions`;
         }
       });
