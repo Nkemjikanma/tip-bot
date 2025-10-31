@@ -6,6 +6,11 @@ import commands from "./commands";
 import { Database } from "bun:sqlite";
 import cron from "node-cron";
 import { Filter } from "bad-words";
+import { getBotUsdcBalance, networkURL, USDC_ADDRESS } from "./utils";
+import { readContract } from "viem/actions";
+import { erc20Abi } from "viem";
+import { SpaceAddressFromSpaceId } from "@towns-protocol/web3";
+
 type UserStats = {
   user_id: string;
   message_count: number;
@@ -95,23 +100,29 @@ CREATE TABLE IF NOT EXISTS challenge_winners (
 
 console.log(`✅ Database initialized at: ${DB_PATH}`);
 
-const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" as `0x${string}`;
-
 const bot = await makeTownsBot(
   process.env.APP_PRIVATE_DATA!,
   process.env.JWT_SECRET!,
   {
     commands,
+    baseRpcUrl: networkURL,
   },
 );
 
 const { jwtMiddleware, handler } = bot.start();
 
+const PHOTOGRAPHY_CHANNEL = "0x16c26e46624ebfd0929c0b0a2d0f51ff1514eb31";
 const app = new Hono();
 app.use(logger());
 app.post("/webhook", jwtMiddleware, handler);
 const filter = new Filter();
 
+const balance = await readContract(bot.viem, {
+  address: USDC_ADDRESS,
+  abi: erc20Abi,
+  functionName: "balanceOf",
+  args: ["0xa384291B9A555Dd904743BE86fd95834c89EC007"],
+});
 const handlerLogger = (scope: string) => ({
   info: (...args: any[]) => console.log(`[${scope}]`, ...args),
   warn: (...args: any[]) => console.warn(`[${scope}]`, ...args),
@@ -370,126 +381,155 @@ bot.onMessage(
     { message, userId, eventId, mentions, channelId, spaceId },
   ) => {
     const isAdmin = handler.hasAdminPermission(userId, spaceId);
+    if (checkIsPhotography(spaceId)) {
+      try {
+        // 1️⃣ Profanity check
+        if (filter.isProfane(message)) {
+          console.log(`🧹 Profanity detected from ${userId}: "${message}"`);
 
-    try {
-      // 1️⃣ Profanity check
-      if (filter.isProfane(message)) {
-        console.log(`🧹 Profanity detected from ${userId}: "${message}"`);
+          // 2️⃣React to the message
+          await handler.sendReaction(channelId, eventId, "👎🏾");
+          await handler.sendReaction(channelId, eventId, "❌");
 
-        // 2️⃣React to the message
-        await handler.sendReaction(channelId, eventId, "👎🏾");
-        await handler.sendReaction(channelId, eventId, "❌");
-
-        // Add user infraction to db
-        db.run(
-          `
+          // Add user infraction to db
+          db.run(
+            `
       INSERT INTO user_infractions (user_id, space_id, message)
       VALUES (?, ?, ?)
     `,
-          [userId, spaceId, message],
-        );
-
-        // count user's infractions
-        const result = db
-          .query(
-            `SELECT COUNT(*) as count FROM user_infractions WHERE user_id = ? AND space_id = ?`,
-          )
-          .get(userId, spaceId) as { count: number };
-
-        const totalInfractions = result?.count || 1;
-
-        if (totalInfractions >= 5) {
-          await handler.sendMessage(
-            channelId,
-            `⚠️ <@${userId}>, please avoid using inappropriate language.`,
-          );
-        }
-
-        if (totalInfractions === 20) {
-          await handler.sendMessage(
-            channelId,
-            `⛔ <@${userId}>, you have been muted for repeated profanity.`,
+            [userId, spaceId, message],
           );
 
-          try {
-            await handler.ban(userId, spaceId);
-          } catch (error) {
-            console.warn("Mute not supported or failed:", error);
+          // count user's infractions
+          const result = db
+            .query(
+              `SELECT COUNT(*) as count FROM user_infractions WHERE user_id = ? AND space_id = ?`,
+            )
+            .get(userId, spaceId) as { count: number };
+
+          const totalInfractions = result?.count || 1;
+
+          if (totalInfractions >= 5) {
+            await handler.sendMessage(
+              channelId,
+              `⚠️ <@${userId}>, please avoid using inappropriate language.`,
+            );
           }
+
+          if (totalInfractions === 20) {
+            await handler.sendMessage(
+              channelId,
+              `⛔ <@${userId}>, you have been muted for repeated profanity.`,
+            );
+
+            try {
+              await handler.ban(userId, spaceId);
+            } catch (error) {
+              console.warn("Mute not supported or failed:", error);
+            }
+          }
+
+          return;
         }
+        if (!isAdmin) {
+          // 🏁 Check if there's an active challenge
+          const activeChallenge = db
+            .query(
+              `SELECT id FROM photo_challenges WHERE space_id = ? AND active = 1 LIMIT 1`,
+            )
+            .get(spaceId) as { id: number } | undefined;
 
-        return;
-      }
-      if (!isAdmin) {
-        // 🏁 Check if there's an active challenge
-        const activeChallenge = db
-          .query(
-            `SELECT id FROM photo_challenges WHERE space_id = ? AND active = 1 LIMIT 1`,
-          )
-          .get(spaceId) as { id: number } | undefined;
-
-        if (activeChallenge && message.includes("#weeklychallenge")) {
-          db.run(
-            `INSERT INTO challenge_entries (challenge_id, user_id, message_id)
+          if (activeChallenge && message.includes("#weeklychallenge")) {
+            db.run(
+              `INSERT INTO challenge_entries (challenge_id, user_id, message_id)
      VALUES (?, ?, ?)`,
-            [activeChallenge.id, userId, eventId],
-          );
+              [activeChallenge.id, userId, eventId],
+            );
 
-          await handler.sendMessage(
-            channelId,
-            `✅ <@${userId}> entered this week's challenge! Good luck! 📷`,
-          );
-        }
+            await handler.sendMessage(
+              channelId,
+              `✅ <@${userId}> entered this week's challenge! Good luck! 📷`,
+            );
+          }
 
-        // Keep track of user stats
-        db.run(
-          `
+          // Keep track of user stats
+          db.run(
+            `
     INSERT INTO user_stats (user_id, space_id, message_count, last_active)
     VALUES (?, ?, 1, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       message_count = message_count + 1,
       last_active = ?
   `,
-          [userId, spaceId, Date.now(), Date.now()],
-        );
-      }
-
-      if (
-        message.toLowerCase().includes("tip") &&
-        mentions &&
-        mentions.length > 0
-      ) {
-        if (!isAdmin) {
-          await handler.sendMessage(
-            channelId,
-            `❌ <@${userId}>, you need admin permissions to use this command.`,
+            [userId, spaceId, Date.now(), Date.now()],
           );
-          return;
         }
-        mentions.forEach(async (mention, index) => {
-          const sendTipResponse = await handler.sendTip({
-            currency: USDC,
-            userId: mention.userId as `0x${string}`,
-            channelId,
-            amount: 1_000_000n,
-            messageId: message,
-          });
 
-          await handler.sendMessage(
+        // "0x@Tip Bot tip @Hikki"
+        if (
+          message.toLowerCase().includes("tip") &&
+          mentions &&
+          mentions.length > 0
+        ) {
+          if (!isAdmin) {
+            await handler.sendMessage(
+              channelId,
+              `❌ <@${userId}>, you need admin permissions to use this command.`,
+            );
+            return;
+          }
+
+          const tipAmount = 1_000_000n;
+
+          if (balance < tipAmount) {
+            await handler.sendMessage(
+              channelId,
+              "⚠️ I don’t have enough USDC to send a tip.",
+            );
+            return;
+          }
+
+          if (BigInt(balance) < tipAmount) {
+            await handler.sendMessage(
+              channelId,
+              "⚠️ I don’t have enough USDC to send a tip.",
+            );
+            return;
+          }
+
+          // TODO: // Check bot balance
+          for (const mention of mentions) {
+            await bot.sendTip({
+              currency: USDC_ADDRESS,
+              userId: mention.userId as `0x${string}`,
+              channelId,
+              amount: 1_000_000n,
+              messageId: eventId,
+            });
+
+            await handler.sendMessage(
+              channelId,
+              ` 💸💸 You've been tipped ${mention.displayName} `,
+            );
+          }
+        } else {
+          handleChannelMessage(handler, {
+            message,
+            userId,
             channelId,
-            ` 💸💸 You've been tipped ${mention.displayName} `,
-          );
+            spaceId,
+          });
+        }
+      } catch (error) {
+        messageLogger.error("Failed handling message", error, {
+          spaceId: spaceId,
+          channelId: channelId,
+          userId: userId,
+          eventId: eventId,
         });
-      } else {
-        handleChannelMessage(handler, { message, userId, channelId, spaceId });
       }
-    } catch (error) {
-      messageLogger.error("Failed handling message", error, {
-        spaceId: spaceId,
-        channelId: channelId,
-        userId: userId,
-        eventId: eventId,
-      });
+    } else {
+      return;
     }
   },
 );
@@ -674,7 +714,7 @@ async function announceWeeklyWinner() {
       try {
         // 💸 Send the tip
         await bot.sendTip({
-          currency: USDC,
+          currency: USDC_ADDRESS,
           userId: user_id as `0x${string}`,
           channelId: challenge.channel_id,
           amount: tipAmount,
@@ -707,6 +747,12 @@ async function announceWeeklyWinner() {
     ]);
   }
 }
+
+const checkIsPhotography = (spaceId: string) => {
+  if (SpaceAddressFromSpaceId(spaceId)) return true;
+
+  return false;
+};
 //---------------------CRON----------------------------//
 cron.schedule(
   "0 9 * * *",

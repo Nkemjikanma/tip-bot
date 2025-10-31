@@ -17,6 +17,7 @@
     "@towns-protocol/bot": "^0.0.391",
     "@towns-protocol/proto": "^0.0.391",
     "@towns-protocol/web3": "^0.0.391",
+    "alchemy-sdk": "^3.6.5",
     "bad-words": "^4.0.0",
     "hono": "^4.7.11",
     "node-cron": "^4.2.1",
