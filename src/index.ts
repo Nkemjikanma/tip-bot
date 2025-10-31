@@ -113,16 +113,15 @@ const { jwtMiddleware, handler } = bot.start();
 
 const PHOTOGRAPHY_CHANNEL = "0x16c26e46624ebfd0929c0b0a2d0f51ff1514eb31";
 const app = new Hono();
-app.use(logger());
+app.use(
+  logger((str, ...rest) => {
+    console.log("[BOT]", str, ...rest);
+  }),
+);
 app.post("/webhook", jwtMiddleware, handler);
+
 const filter = new Filter();
 
-const balance = await readContract(bot.viem, {
-  address: USDC_ADDRESS,
-  abi: erc20Abi,
-  functionName: "balanceOf",
-  args: ["0xa384291B9A555Dd904743BE86fd95834c89EC007"],
-});
 const handlerLogger = (scope: string) => ({
   info: (...args: any[]) => console.log(`[${scope}]`, ...args),
   warn: (...args: any[]) => console.warn(`[${scope}]`, ...args),
@@ -380,7 +379,9 @@ bot.onMessage(
     handler,
     { message, userId, eventId, mentions, channelId, spaceId },
   ) => {
-    const isAdmin = handler.hasAdminPermission(userId, spaceId);
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId);
+    const lowerMessage = message.toLowerCase().trim();
+
     if (checkIsPhotography(spaceId)) {
       try {
         // 1️⃣ Profanity check
@@ -465,12 +466,19 @@ bot.onMessage(
           );
         }
 
-        // "0x@Tip Bot tip @Hikki"
-        if (
-          message.toLowerCase().includes("tip") &&
-          mentions &&
-          mentions.length > 0
-        ) {
+        const mentionsSomeoneElse = mentions && mentions.length > 0;
+        const mentionsBot =
+          mentions?.some((m) =>
+            m.displayName.toLowerCase().includes("tip-bot"),
+          ) ?? false;
+
+        const isTipCommand =
+          mentionsBot &&
+          lowerMessage.includes("tip") &&
+          mentionsSomeoneElse &&
+          !lowerMessage.endsWith("tip-bot"); // ensure not self-mention
+
+        if (isTipCommand) {
           if (!isAdmin) {
             await handler.sendMessage(
               channelId,
@@ -478,47 +486,48 @@ bot.onMessage(
             );
             return;
           }
+        }
 
-          const tipAmount = 1_000_000n;
+        const botBalance = await getBotBalance(
+          bot.client.wallet.address as `0x${string}`,
+        );
 
-          if (balance < tipAmount) {
-            await handler.sendMessage(
-              channelId,
-              "⚠️ I don’t have enough USDC to send a tip.",
-            );
-            return;
-          }
+        const tipAmount = 1_000_000n; // 1 USDC
 
-          if (BigInt(balance) < tipAmount) {
-            await handler.sendMessage(
-              channelId,
-              "⚠️ I don’t have enough USDC to send a tip.",
-            );
-            return;
-          }
-
-          // TODO: // Check bot balance
-          for (const mention of mentions) {
-            await bot.sendTip({
-              currency: USDC_ADDRESS,
-              userId: mention.userId as `0x${string}`,
-              channelId,
-              amount: 1_000_000n,
-              messageId: eventId,
-            });
-
-            await handler.sendMessage(
-              channelId,
-              ` 💸💸 You've been tipped ${mention.displayName} `,
-            );
-          }
-        } else {
-          handleChannelMessage(handler, {
-            message,
-            userId,
+        if (botBalance < tipAmount) {
+          await handler.sendMessage(
             channelId,
-            spaceId,
+            "⚠️ I don’t have enough USDC to send a tip. Please fund me first!",
+          );
+          return;
+        }
+
+        // --- 💸 Send Tip ---
+        for (const mention of mentions) {
+          if (mention.displayName.toLowerCase().includes("tip-bot")) continue;
+
+          await bot.sendTip({
+            currency: USDC_ADDRESS,
+            userId: mention.userId as `0x${string}`,
+            channelId,
+            amount: tipAmount,
+            messageId: eventId,
           });
+
+          await handler.sendMessage(
+            channelId,
+            `💸 <@${mention.userId}> just received 1 USDC from <@${userId}>!`,
+          );
+
+          return;
+        }
+
+        if (mentionsBot && !lowerMessage.includes("tip")) {
+          const replies = ["gm ☀️", "gTown 🌆", "how can I help?", "👋 wagmi!"];
+          const randomReply =
+            replies[Math.floor(Math.random() * replies.length)];
+          await handler.sendMessage(channelId, randomReply);
+          return;
         }
       } catch (error) {
         messageLogger.error("Failed handling message", error, {
@@ -656,6 +665,12 @@ async function handleChannelMessage(handler: any, event: any) {
       `💡 For now, /leaderboard brings up the leaderboard`,
     );
   }
+
+  if (lowerMessage === "@tip-bot" || lowerMessage === "tip-bot") {
+    const responses = ["gm 📸", "gTown 🚀", "Hello photographers! ✨"];
+    const random = responses[Math.floor(Math.random() * responses.length)];
+    await handler.sendMessage(channelId, random);
+  }
 }
 
 async function postCronMessages() {
@@ -747,6 +762,30 @@ async function announceWeeklyWinner() {
     ]);
   }
 }
+
+async function getBotBalance(botAddress: `0x${string}`) {
+  return await readContract(bot.viem, {
+    address: USDC_ADDRESS,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [botAddress],
+  });
+}
+
+// export async function getBotUsdcBalance(client, botAddress: `0x${string}`) {
+//   try {
+//     const balance = await readContract(client, {
+//       address: USDC_ADDRESS,
+//       abi: erc20Abi,
+//       functionName: "balanceOf",
+//       args: [botAddress],
+//     });
+//     return balance as bigint;
+//   } catch (error) {
+//     console.error("Error fetching USDC balance:", error);
+//     return 0n;
+//   }
+// }
 
 const checkIsPhotography = (spaceId: string) => {
   if (SpaceAddressFromSpaceId(spaceId)) return true;
