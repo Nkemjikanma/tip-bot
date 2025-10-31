@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS bot_channels (
 );
 `);
 
+// User infractions - eg usuing bad words
 db.run(`
 CREATE TABLE IF NOT EXISTS user_infractions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +53,43 @@ CREATE TABLE IF NOT EXISTS user_infractions (
   message TEXT NOT NULL,
   timestamp INTEGER DEFAULT (strftime('%s', 'now')),
   infraction_count INTEGER DEFAULT 1
+);
+`);
+
+// Weekly Challenges
+db.run(`
+CREATE TABLE IF NOT EXISTS photo_challenges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  space_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  theme TEXT NOT NULL,
+  start_time INTEGER NOT NULL,
+  end_time INTEGER NOT NULL,
+  active INTEGER DEFAULT 1
+);
+`);
+
+// Weekly challenge  entries
+db.run(`
+CREATE TABLE IF NOT EXISTS challenge_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challenge_id INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  reaction_count INTEGER DEFAULT 0,
+  FOREIGN KEY(challenge_id) REFERENCES photo_challenges(id)
+);
+`);
+
+// Challenge winners
+db.run(`
+CREATE TABLE IF NOT EXISTS challenge_winners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challenge_id INTEGER,
+  user_id TEXT,
+  reaction_count INTEGER,
+  prize_amount INTEGER,
+  timestamp INTEGER DEFAULT (strftime('%s', 'now'))
 );
 `);
 
@@ -88,7 +126,12 @@ bot.onSlashCommand("help", async (handler, { channelId }) => {
     "**Available Commands:**\n\n" +
       "• `/help` - Show this help message\n" +
       "• `/leaderboard` - Who is getting rewarded this month? \n\n" +
-      "• `/set_gm` - Wake the people up with a bubbly message \n\n" +
+      "• `/infractions` - Who has been messing up? \n\n" +
+      "• `/challenge_start` - ADMIN ONLY - Start weekly challenge \n\n" +
+      "• `/challenge_end` - ADMIN ONLY - End weekly challenge \n\n" +
+      "• `/challenge_current` - Show current challenge(s) \n\n" +
+      "• `/set_gm` - ADMIN ONLY - Wake the people up with a bubbly message \n\n" +
+      "• `/challenge_winners` - See list of all challenge winners \n\n" +
       "• Some messages trigger me, so feel free to say hello and see what works. \n",
   );
 });
@@ -185,6 +228,141 @@ bot.onSlashCommand("infractions", async (handler, { spaceId, channelId }) => {
   await handler.sendMessage(channelId, msg);
 });
 
+bot.onSlashCommand(
+  "challenge_start",
+  async (handler, { spaceId, channelId, userId, args }) => {
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId);
+    if (!isAdmin) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Only admins can start challenges.",
+      );
+      return;
+    }
+
+    const theme = args.join(" ");
+    if (!theme) {
+      await handler.sendMessage(
+        channelId,
+        "⚠️ Please specify a theme, e.g. `/challenge_start Reflections`",
+      );
+      return;
+    }
+
+    const now = Date.now();
+    const end = now + 7 * 24 * 60 * 60 * 1000; // 7 days later
+
+    db.run(
+      `INSERT INTO photo_challenges (space_id, channel_id, theme, start_time, end_time, active)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+      [spaceId, channelId, theme, now, end],
+    );
+
+    await handler.sendMessage(
+      channelId,
+      `📸 **New Weekly Photo Challenge!**\n\nTheme: *${theme}*\n\nPost your photos with **#weeklychallenge** this week! ❤️`,
+    );
+  },
+);
+
+bot.onSlashCommand(
+  "challenge_end",
+  async (handler, { spaceId, channelId, userId }) => {
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId);
+    if (!isAdmin) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Only admins can end challenges.",
+      );
+      return;
+    }
+
+    db.run(
+      `UPDATE photo_challenges SET active = 0 WHERE space_id = ? AND active = 1`,
+      [spaceId],
+    );
+
+    await handler.sendMessage(
+      channelId,
+      `✅ The current photo challenge has been closed for submissions.`,
+    );
+  },
+);
+
+bot.onSlashCommand(
+  "challenge_current",
+  async (handler, { spaceId, channelId }) => {
+    const challenge = db
+      .query(
+        `SELECT theme, end_time FROM photo_challenges WHERE space_id = ? AND active = 1 LIMIT 1`,
+      )
+      .get(spaceId) as { theme: string; end_time: number } | undefined;
+
+    if (!challenge) {
+      await handler.sendMessage(channelId, "📷 No active challenge right now!");
+      return;
+    }
+
+    const daysLeft = Math.ceil(
+      (challenge.end_time - Date.now()) / (1000 * 60 * 60 * 24),
+    );
+    await handler.sendMessage(
+      channelId,
+      `🗓️ Current theme: *${challenge.theme}* (${daysLeft} days left)`,
+    );
+  },
+);
+
+bot.onSlashCommand("challenge_winners", async (handler, event) => {
+  try {
+    const rows = db
+      .query(
+        `
+        SELECT cw.*, pc.theme
+        FROM challenge_winners cw
+        LEFT JOIN photo_challenges pc ON cw.challenge_id = pc.id
+        ORDER BY cw.timestamp DESC
+        LIMIT 5
+        `,
+      )
+      .all() as {
+      user_id: string;
+      theme: string;
+      prize_amount: number;
+      timestamp: number;
+    }[];
+
+    if (rows.length === 0) {
+      await handler.sendMessage(
+        event.channelId,
+        "🏆 No photo challenge winners yet! Participate this week to become the first!",
+      );
+      return;
+    }
+
+    const messageLines = rows.map((row, i) => {
+      const date = new Date(row.timestamp * 1000).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
+
+      return `**${i + 1}.** <@${row.user_id}> — *${row.theme || "Unknown theme"}*  
+💰 ${Number(row.prize_amount) / 1_000_000} USDC — 🗓 ${date}`;
+    });
+
+    await handler.sendMessage(
+      event.channelId,
+      "📸 **Photo Challenge Hall of Fame**\n\n" + messageLines.join("\n\n"),
+    );
+  } catch (err) {
+    console.error("Error fetching winners:", err);
+    await handler.sendMessage(
+      event.channelId,
+      "⚠️ Couldn't fetch winners right now. Please try again later.",
+    );
+  }
+});
+
 //--------------- Bot Listeners -------------------//
 bot.onMessage(
   async (
@@ -244,6 +422,27 @@ bot.onMessage(
 
     try {
       if (!isAdmin) {
+        // 🏁 Check if there's an active challenge
+        const activeChallenge = db
+          .query(
+            `SELECT id FROM photo_challenges WHERE space_id = ? AND active = 1 LIMIT 1`,
+          )
+          .get(spaceId) as { id: number } | undefined;
+
+        if (activeChallenge && message.includes("#weeklychallenge")) {
+          db.run(
+            `INSERT INTO challenge_entries (challenge_id, user_id, message_id)
+     VALUES (?, ?, ?)`,
+            [activeChallenge.id, userId, eventId],
+          );
+
+          await handler.sendMessage(
+            channelId,
+            `✅ <@${userId}> entered this week's challenge! Good luck! 📷`,
+          );
+        }
+
+        // Keep track of user stats
         db.run(
           `
     INSERT INTO user_stats (user_id, space_id, message_count, last_active)
@@ -349,10 +548,18 @@ bot.onTip(async (handler, event) => {
 });
 
 bot.onReaction(async (handler, event) => {
-  const { userId, spaceId } = event;
+  const { userId, spaceId, messageId } = event;
 
   if (userId === bot.botId) return;
+  // Track reactions for challenges
+  db.run(
+    `UPDATE challenge_entries
+     SET reaction_count = reaction_count + 1
+     WHERE message_id = ?`,
+    [messageId],
+  );
 
+  // user activity stats
   db.run(
     `
     INSERT INTO user_stats (user_id, space_id, reaction_count, last_active)
@@ -422,11 +629,90 @@ async function postCronMessages() {
   }
 }
 
+async function announceWeeklyWinner() {
+  const endedChallenges = db
+    .query(
+      `
+      SELECT * FROM photo_challenges
+      WHERE active = 1 AND end_time <= ?
+    `,
+    )
+    .all(Date.now()) as {
+    id: number;
+    channel_id: string;
+    theme: string;
+    space_id: string;
+  }[];
+
+  for (const challenge of endedChallenges) {
+    const topEntry = db
+      .query(
+        `
+        SELECT user_id, reaction_count
+        FROM challenge_entries
+        WHERE challenge_id = ?
+        ORDER BY reaction_count DESC
+        LIMIT 1
+      `,
+      )
+      .get(challenge.id) as
+      | { user_id: string; reaction_count: number }
+      | undefined;
+
+    if (topEntry) {
+      const { user_id, reaction_count } = topEntry;
+      const tipAmount = 5_000_000n; // 5 USDC
+
+      try {
+        // 💸 Send the tip
+        await bot.sendTip({
+          currency: USDC,
+          userId: user_id as `0x${string}`,
+          channelId: challenge.channel_id,
+          amount: tipAmount,
+          messageId: `challenge-${challenge.id}`,
+        });
+
+        //  Announce the winner
+        await bot.sendMessage(
+          challenge.channel_id,
+          `🏆 **Photo of the Week — Theme: ${challenge.theme}** 🏆\n\n` +
+            `<@${user_id}> wins with ${reaction_count} reactions!\n\n` +
+            `💰 **Prize:** 5 USDC sent on-chain!`,
+        );
+      } catch (error) {
+        console.error("Error tipping challenge winner:", error);
+        await bot.sendMessage(
+          challenge.channel_id,
+          `⚠️ Could not send tip to <@${user_id}>. Please check the bot’s permissions or wallet balance.`,
+        );
+      }
+    } else {
+      await bot.sendMessage(
+        challenge.channel_id,
+        `📸 The challenge "${challenge.theme}" ended with no entries this week.`,
+      );
+    }
+
+    db.run(`UPDATE photo_challenges SET active = 0 WHERE id = ?`, [
+      challenge.id,
+    ]);
+  }
+}
 //---------------------CRON----------------------------//
 cron.schedule(
   "0 9 * * *",
   async () => {
     postCronMessages();
+  },
+  { timezone: "UTC" },
+);
+
+cron.schedule(
+  "0 23 * * SUN",
+  async () => {
+    console.log("📅 Running weekly challenge results...");
+    await announceWeeklyWinner();
   },
   { timezone: "UTC" },
 );

@@ -17,6 +17,10 @@ const commands = [
     name: "infractions",
     description: "See who has been misbehaving",
   },
+  { name: "challenge_start", description: "Start weekly challenge" },
+  { name: "challenge_end", description: "End weekly challenge" },
+  { name: "challenge_current", description: "See current challenge" },
+  { name: "challenge_winners", description: "See challenge winners" },
 ] as const satisfies PlainMessage<SlashCommand>[];
 
 export default commands;
