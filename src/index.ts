@@ -466,69 +466,69 @@ bot.onMessage(
           );
         }
 
-        const mentionsSomeoneElse = mentions && mentions.length > 0;
-        const mentionsBot =
-          mentions?.some((m) =>
-            m.displayName.toLowerCase().includes("tip-bot"),
-          ) ?? false;
-
-        const isTipCommand =
-          mentionsBot &&
-          lowerMessage.includes("tip") &&
-          mentionsSomeoneElse &&
-          !lowerMessage.endsWith("tip-bot"); // ensure not self-mention
-
-        if (isTipCommand) {
-          if (!isAdmin) {
-            await handler.sendMessage(
-              channelId,
-              `❌ <@${userId}>, you need admin permissions to use this command.`,
-            );
-            return;
-          }
-        }
-
-        const botBalance = await getBotBalance(
-          bot.client.wallet.address as `0x${string}`,
-        );
-
-        const tipAmount = 1_000_000n; // 1 USDC
-
-        if (botBalance < tipAmount) {
-          await handler.sendMessage(
-            channelId,
-            "⚠️ I don’t have enough USDC to send a tip. Please fund me first!",
-          );
-          return;
-        }
-
-        // --- 💸 Send Tip ---
-        for (const mention of mentions) {
-          if (mention.displayName.toLowerCase().includes("tip-bot")) continue;
-
-          await bot.sendTip({
-            currency: USDC_ADDRESS,
-            userId: mention.userId as `0x${string}`,
-            channelId,
-            amount: tipAmount,
-            messageId: eventId,
-          });
-
-          await handler.sendMessage(
-            channelId,
-            `💸 <@${mention.userId}> just received 1 USDC from <@${userId}>!`,
-          );
-
-          return;
-        }
-
-        if (mentionsBot && !lowerMessage.includes("tip")) {
-          const replies = ["gm ☀️", "gTown 🌆", "how can I help?", "👋 wagmi!"];
-          const randomReply =
-            replies[Math.floor(Math.random() * replies.length)];
-          await handler.sendMessage(channelId, randomReply);
-          return;
-        }
+        // const mentionsSomeoneElse = mentions && mentions.length > 0;
+        // const mentionsBot =
+        //   mentions?.some((m) =>
+        //     m.displayName.toLowerCase().includes("tip-bot"),
+        //   ) ?? false;
+        //
+        // const isTipCommand =
+        //   mentionsBot &&
+        //   lowerMessage.includes("tip") &&
+        //   mentionsSomeoneElse &&
+        //   !lowerMessage.endsWith("tip-bot"); // ensure not self-mention
+        //
+        // if (isTipCommand) {
+        //   if (!isAdmin) {
+        //     await handler.sendMessage(
+        //       channelId,
+        //       `❌ <@${userId}>, you need admin permissions to use this command.`,
+        //     );
+        //     return;
+        //   }
+        // }
+        //
+        // const botBalance = await getBotBalance(
+        //   bot.client.wallet.address as `0x${string}`,
+        // );
+        //
+        // const tipAmount = 1_000_000n; // 1 USDC
+        //
+        // if (botBalance < tipAmount) {
+        //   await handler.sendMessage(
+        //     channelId,
+        //     "⚠️ I don’t have enough USDC to send a tip. Please fund me first!",
+        //   );
+        //   return;
+        // }
+        //
+        // // --- 💸 Send Tip ---
+        // for (const mention of mentions) {
+        //   if (mention.displayName.toLowerCase().includes("tip-bot")) continue;
+        //
+        //   await bot.sendTip({
+        //     currency: USDC_ADDRESS,
+        //     userId: mention.userId as `0x${string}`,
+        //     channelId,
+        //     amount: tipAmount,
+        //     messageId: eventId,
+        //   });
+        //
+        //   await handler.sendMessage(
+        //     channelId,
+        //     `💸 <@${mention.userId}> just received 1 USDC from <@${userId}>!`,
+        //   );
+        //
+        //   return;
+        // }
+        //
+        // if (mentionsBot && !lowerMessage.includes("tip")) {
+        //   const replies = ["gm ☀️", "gTown 🌆", "how can I help?", "👋 wagmi!"];
+        //   const randomReply =
+        //     replies[Math.floor(Math.random() * replies.length)];
+        //   await handler.sendMessage(channelId, randomReply);
+        //   return;
+        // }
       } catch (error) {
         messageLogger.error("Failed handling message", error, {
           spaceId: spaceId,
