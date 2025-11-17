@@ -164,7 +164,10 @@ bot.onSlashCommand(
         .all(spaceId) as UserStats[];
 
       if (topUsers.length === 0) {
-        await handler.sendMessage(channelId, "📊 No activity data yet!");
+        await handler.sendMessage(
+          channelId,
+          `📊 No activity data yet! \n ${spaceId}`,
+        );
         return;
       }
 
