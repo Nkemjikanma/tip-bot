@@ -27,15 +27,16 @@ type BotChannel = {
 };
 
 const DB_PATH = process.env.DATABASE_PATH || "./photography.db";
-const db = new Database("photography.db");
+const db = new Database(DB_PATH);
 db.run(`
   CREATE TABLE IF NOT EXISTS user_stats (
-    user_id TEXT PRIMARY KEY,
-    space_id TEXT NOT NULL,
-    message_count INTEGER DEFAULT 0,
-    reaction_count INTEGER DEFAULT 0,
-    last_active INTEGER DEFAULT 0
-  )
+  user_id TEXT NOT NULL,
+  space_id TEXT NOT NULL,
+  message_count INTEGER DEFAULT 0,
+  reaction_count INTEGER DEFAULT 0,
+  last_active INTEGER DEFAULT 0,
+  PRIMARY KEY (user_id, space_id)
+)
 `);
 
 db.run(`
@@ -49,7 +50,7 @@ CREATE TABLE IF NOT EXISTS bot_channels (
 );
 `);
 
-// User infractions - eg usuing bad words
+// User infractions - eg using bad words
 db.run(`
 CREATE TABLE IF NOT EXISTS user_infractions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,7 +98,15 @@ CREATE TABLE IF NOT EXISTS challenge_winners (
   timestamp INTEGER DEFAULT (strftime('%s', 'now'))
 );
 `);
-
+db.run(
+  `CREATE INDEX IF NOT EXISTS idx_challenge_entries_challenge_id ON challenge_entries(challenge_id)`,
+);
+db.run(
+  `CREATE INDEX IF NOT EXISTS idx_challenge_entries_message_id ON challenge_entries(message_id)`,
+);
+db.run(
+  `CREATE INDEX IF NOT EXISTS idx_user_infractions_user_space ON user_infractions(user_id, space_id)`,
+);
 console.log(`✅ Database initialized at: ${DB_PATH}`);
 
 const bot = await makeTownsBot(
@@ -164,10 +173,7 @@ bot.onSlashCommand(
         .all(spaceId) as UserStats[];
 
       if (topUsers.length === 0) {
-        await handler.sendMessage(
-          channelId,
-          `📊 No activity data yet! \n ${spaceId}`,
-        );
+        await handler.sendMessage(channelId, `📊 No activity data yet!`);
         return;
       }
 
@@ -185,7 +191,7 @@ bot.onSlashCommand(
         }
       });
 
-      await handler.sendMessage(channelId, leaderboard + `\n ${spaceId}`);
+      await handler.sendMessage(channelId, leaderboard);
     } catch (error) {
       console.error("Leaderboard error:", error);
       await handler.sendMessage(channelId, "❌ Error fetching leaderboard");
@@ -207,7 +213,7 @@ bot.onSlashCommand(
       `
     INSERT INTO bot_channels (space_id, channel_id, scheduled_message, cron_enabled)
     VALUES (?, ?, ?, 1)
-    ON CONFLICT(channel_id) DO UPDATE SET cron_enabled = 1
+    ON CONFLICT(channel_id) DO UPDATE SET scheduled_message = excluded.scheduled_message, cron_enabled = 1
     `,
       [spaceId, channelId, gm_message],
     );
@@ -464,9 +470,9 @@ bot.onMessage(
             `
     INSERT INTO user_stats (user_id, space_id, message_count, last_active)
     VALUES (?, ?, 1, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      message_count = message_count + 1,
-      last_active = ?
+ON CONFLICT(user_id, space_id) DO UPDATE SET
+  message_count = message_count + 1,
+  last_active = excluded.last_active
   `,
             [userId, spaceId, Date.now(), Date.now()],
           );
@@ -595,7 +601,7 @@ Welcome aboard! 🚀 `,
 bot.onTip(async (handler, event) => {
   const { userId, channelId } = event;
 
-  handler.sendMessage(
+  await handler.sendMessage(
     channelId,
     `I see you champ! Keep that coming! ${userId}`,
   );
@@ -687,14 +693,21 @@ async function postCronMessages() {
   const now = Date.now();
 
   for (const channel of channels) {
-    const message = channel.scheduled_message || "🌞 gm everyone!";
-    await bot.sendMessage(channel.channel_id, message);
+    try {
+      const message = channel.scheduled_message || "🌞 gm everyone!";
+      await bot.sendMessage(channel.channel_id, message);
 
-    // Update last post info
-    await db.run(
-      `UPDATE bot_channels SET last_cron_post = ? WHERE channel_id = ?`,
-      [now, channel.channel_id],
-    );
+      // Update last post info
+      await db.run(
+        `UPDATE bot_channels SET last_cron_post = ? WHERE channel_id = ?`,
+        [now, channel.channel_id],
+      );
+    } catch (error) {
+      console.error(
+        `Failed to send cron message to ${channel.channel_id}:`,
+        error,
+      );
+    }
   }
 }
 
@@ -792,11 +805,13 @@ async function getBotBalance(botAddress: `0x${string}`) {
 //     return 0n;
 //   }
 // }
+//
+
+const PHOTOGRAPHY_SPACE_ID =
+  "1016c26e46624ebfd0929c0b0a2d0f51ff1514eb310000000000000000000000";
 
 const checkIsPhotography = (spaceId: string) => {
-  if (SpaceAddressFromSpaceId(spaceId)) return true;
-
-  return false;
+  return spaceId === PHOTOGRAPHY_SPACE_ID;
 };
 //---------------------CRON----------------------------//
 cron.schedule(
