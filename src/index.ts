@@ -208,14 +208,9 @@ bot.onSlashCommand(
       return;
     }
 
-    let gm_message =
-      args.join(" ") + "\n\n all have an amazing and productive day!";
+    let gm_message = args.join(" ");
 
-    // If no custom message, use a bright cheerful default
-    if (!gm_message) {
-      gm_message =
-        "🌅 gTowns, everyone! ☀️\n\nHope you all have an amazing and productive day! Let's create and share beautiful shots today! 📸✨";
-    }
+    let message = `🌅 ${gm_message} || gTowns, everyone! ☀️\n\nHope you all have an amazing and productive day! Let's create and share beautiful shots today! 📸✨`;
 
     await db.run(
       `
@@ -223,12 +218,12 @@ bot.onSlashCommand(
     VALUES (?, ?, ?, 1)
     ON CONFLICT(channel_id) DO UPDATE SET scheduled_message = excluded.scheduled_message, cron_enabled = 1
     `,
-      [spaceId, channelId, gm_message],
+      [spaceId, channelId, message],
     );
 
     await handler.sendMessage(
       channelId,
-      `✅ Daily morning message scheduled!\n\n**Preview:**\n${gm_message}`,
+      `✅ Daily morning message scheduled! 🌅\n\n**Preview of what I'll post every morning at 9 AM UTC:**\n\n${gm_message || "🌞 gm everyone!"}\n\n_Use /set_gm again with a different message to update it._`,
     );
   },
 );
