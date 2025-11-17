@@ -202,13 +202,21 @@ bot.onSlashCommand(
 bot.onSlashCommand(
   "set_gm",
   async (handler, { spaceId, channelId, userId, args }) => {
-    let gm_message = args.join(" ");
-
     const isAdmin = await handler.hasAdminPermission(userId, spaceId);
     if (!isAdmin) {
       await handler.sendMessage(channelId, "❌ Only admins can schedule gms.");
       return;
     }
+
+    let gm_message =
+      args.join(" ") + "\n\n all have an amazing and productive day!";
+
+    // If no custom message, use a bright cheerful default
+    if (!gm_message) {
+      gm_message =
+        "🌅 gTowns, everyone! ☀️\n\nHope you all have an amazing and productive day! Let's create and share beautiful shots today! 📸✨";
+    }
+
     await db.run(
       `
     INSERT INTO bot_channels (space_id, channel_id, scheduled_message, cron_enabled)
@@ -220,7 +228,7 @@ bot.onSlashCommand(
 
     await handler.sendMessage(
       channelId,
-      "✅ We keep the 'gm' rolling every morning!",
+      `✅ Daily morning message scheduled!\n\n**Preview:**\n${gm_message}`,
     );
   },
 );
@@ -694,7 +702,7 @@ async function postCronMessages() {
 
   for (const channel of channels) {
     try {
-      const message = channel.scheduled_message || "🌞 gm everyone!";
+      const message = channel.scheduled_message || getRandomGmMessage();
       await bot.sendMessage(channel.channel_id, message);
 
       // Update last post info
@@ -782,6 +790,17 @@ async function announceWeeklyWinner() {
   }
 }
 
+function getRandomGmMessage(): string {
+  const messages = [
+    "🌅 Good morning, everyone! ☀️\n\nHope you all have an amazing and productive day! Let's create something beautiful together! 📸✨",
+    "☀️ Rise and shine! 🌞\n\nA new day, a new opportunity to capture amazing moments! Let's make today count! 📷💫",
+    "🌄 Good morning, photographers! 🎨\n\nThe world is full of beauty waiting to be captured. Get out there and make magic happen! ✨📸",
+    "🌞 gTowns! 🎊\n\nToday's forecast: 100% chance of amazing photos and great vibes! Let's goooo! 🚀📷",
+    "☀️ GM, GM! \n\nRemember: every sunrise is an invitation to brighten someone's day with your art! Keep shining! ✨📸",
+  ];
+
+  return messages[Math.floor(Math.random() * messages.length)];
+}
 async function getBotBalance(botAddress: `0x${string}`) {
   return await readContract(bot.viem, {
     address: USDC_ADDRESS,
