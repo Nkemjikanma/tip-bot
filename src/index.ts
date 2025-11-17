@@ -201,7 +201,7 @@ bot.onSlashCommand(
 
 bot.onSlashCommand(
   "set_gm",
-  async (handler, { spaceId, channelId, userId, args }) => {
+  async (handler, { spaceId, channelId, userId, args, threadId, eventId }) => {
     const isAdmin = await handler.hasAdminPermission(userId, spaceId);
     if (!isAdmin) {
       await handler.sendMessage(channelId, "❌ Only admins can schedule gms.");
@@ -224,34 +224,42 @@ bot.onSlashCommand(
     await handler.sendMessage(
       channelId,
       `✅ Daily morning message scheduled! 🌅\n\n**Preview of what I'll post every morning at 9 AM UTC:**\n\n${gm_message || "🌞 gm everyone!"}\n\n_Use /set_gm again with a different message to update it._`,
+      {
+        threadId: threadId || eventId,
+      },
     );
   },
 );
 
-bot.onSlashCommand("infractions", async (handler, { spaceId, channelId }) => {
-  const infractions = db
-    .query(
-      `SELECT user_id, COUNT(*) as total
+bot.onSlashCommand(
+  "infractions",
+  async (handler, { spaceId, channelId, threadId, eventId }) => {
+    const infractions = db
+      .query(
+        `SELECT user_id, COUNT(*) as total
        FROM user_infractions
        WHERE space_id = ?
        GROUP BY user_id
        ORDER BY total DESC
        LIMIT 10`,
-    )
-    .all(spaceId) as { user_id: string; total: number }[];
+      )
+      .all(spaceId) as { user_id: string; total: number }[];
 
-  if (infractions.length === 0) {
-    await handler.sendMessage(channelId, "✅ No infractions logged yet!");
-    return;
-  }
+    if (infractions.length === 0) {
+      await handler.sendMessage(channelId, "✅ No infractions logged yet!");
+      return;
+    }
 
-  let msg = "🚨 **Top Offenders**\n\n";
-  for (const row of infractions) {
-    msg += `• <@${row.user_id}> — ${row.total} infractions\n`;
-  }
+    let msg = "🚨 **Top Offenders**\n\n";
+    for (const row of infractions) {
+      msg += `• <@${row.user_id}> — ${row.total} infractions\n`;
+    }
 
-  await handler.sendMessage(channelId, msg);
-});
+    await handler.sendMessage(channelId, msg, {
+      threadId: threadId || eventId,
+    });
+  },
+);
 
 bot.onSlashCommand(
   "challenge_start",
@@ -384,6 +392,9 @@ bot.onSlashCommand("challenge_winners", async (handler, event) => {
     await handler.sendMessage(
       event.channelId,
       "⚠️ Couldn't fetch winners right now. Please try again later.",
+      {
+        threadId: event.threadId || event.eventId,
+      },
     );
   }
 });
