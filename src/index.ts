@@ -6,7 +6,7 @@ import commands from "./commands";
 import { Database } from "bun:sqlite";
 import cron from "node-cron";
 import { Filter } from "bad-words";
-import { getBotUsdcBalance, networkURL, USDC_ADDRESS } from "./utils";
+import { getBotEthBalance, networkURL, USDC_ADDRESS } from "./utils";
 import { readContract } from "viem/actions";
 import { erc20Abi } from "viem";
 import { SpaceAddressFromSpaceId } from "@towns-protocol/web3";
@@ -111,7 +111,8 @@ const bot = await makeTownsBot(
 
 const { jwtMiddleware, handler } = bot.start();
 
-const PHOTOGRAPHY_CHANNEL = "0x16c26e46624ebfd0929c0b0a2d0f51ff1514eb31";
+const PHOTOGRAPHY_CHANNEL_ADDRESS =
+  "0x16c26e46624ebfd0929c0b0a2d0f51ff1514eb31";
 const app = new Hono();
 app.use(
   logger((str, ...rest) => {
@@ -148,7 +149,7 @@ bot.onSlashCommand("help", async (handler, { channelId }) => {
 
 bot.onSlashCommand(
   "leaderboard",
-  async (handler, { spaceId, channelId, userId }) => {
+  async (handler, { spaceId, channelId, userId, eventId }) => {
     try {
       const topUsers = db
         .query(
@@ -180,6 +181,8 @@ bot.onSlashCommand(
           leaderboard += `   🎉 You are position ${index + 1} with ${user.message_count} messages and ${user.reaction_count} reactions`;
         }
       });
+
+      await handler.sendMessage(channelId, leaderboard + `\n ${spaceId}`);
     } catch (error) {
       console.error("Leaderboard error:", error);
       await handler.sendMessage(channelId, "❌ Error fetching leaderboard");

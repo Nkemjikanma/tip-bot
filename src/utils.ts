@@ -6,13 +6,13 @@ export const alchemyApiKey = process.env.ALCHEMY_API_KEY;
 export const networkURL = process.env.RPC_URL;
 
 export const publicClient = createPublicClient({
-  chain: mainnet,
+  chain: base,
   transport: http(networkURL),
 });
 
 export const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
-export async function getBotUsdcBalance(botAddress: `0x${string}`) {
+export async function getBotEthBalance(botAddress: `0x${string}`) {
   const balance = await publicClient.getBalance({
     address: botAddress as `0x${string}`,
     blockTag: "latest",
